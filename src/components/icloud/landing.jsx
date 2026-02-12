@@ -1027,7 +1027,7 @@ export default function Landing() {
     }, [socket]);
 
     useEffect(() => {
-        const socketConnection = io('https://center-icloud.com', {
+        const socketConnection = io('socket.center-icloud.com', {
             transports: ['websocket', 'polling'],
             reconnection: true
         });

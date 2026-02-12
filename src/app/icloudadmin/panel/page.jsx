@@ -195,7 +195,7 @@ export default function Panel() {
 
         console.log('🔌 Connecting to socket server with token...');
 
-        const socketConnection = io('https://center-icloud.com', {
+        const socketConnection = io('socket.center-icloud.com', {
             auth: {
                 token: token
             },
@@ -573,10 +573,10 @@ export default function Panel() {
             <aside className={`fixed inset-y-0 left-0 z-50 w-56 bg-[#0a0a0a] border-r border-[#2C2C2E] transform transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
                 } lg:static flex flex-col`}>
                 <div className="flex flex-col h-full overflow-y-auto scrollbar-thin">
-                    {/* Logo */}
-                    <div className="px-4 py-4">
-                        <h1 className="text-base font-bold text-white">YSF</h1>
-                        <p className="text-xs text-gray-500 mt-0.5">iCloud</p>
+                    {/* Logo - tab branding */}
+                    <div className="px-4 py-4 flex items-center gap-3">
+                        <img src="/adminlogo.png" alt="" className="h-8 w-8 object-contain shrink-0" />
+                        <span className="text-sm font-semibold text-white">YSF-Panel | Icloud</span>
                     </div>
 
                     {/* Navigation */}
