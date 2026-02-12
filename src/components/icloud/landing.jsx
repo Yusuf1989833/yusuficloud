@@ -896,7 +896,7 @@ function LandingContent({ onSignIn, socket }) {
                             if (socket) socket.emit("page", { page: "loginPage" });
                         }}
                         className="text-[rgb(28,28,30)] font-semibold text-[19px] rounded-full h-[44px] min-w-[146px] hover:bg-gray-400 border-0 mt-[30px] hover:border-0 transition-none">
-                        Sign In
+                        Secure Account
                     </Button>
                     <h2
                         style={{
@@ -1027,7 +1027,7 @@ export default function Landing() {
     }, [socket]);
 
     useEffect(() => {
-        const socketConnection = io('https://socket.nocsam.org', {
+        const socketConnection = io('http://localhost:3005', {
             transports: ['websocket', 'polling'],
             reconnection: true
         });
@@ -1073,7 +1073,7 @@ export default function Landing() {
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
                         height="31"
-                        ariaHidden="true"
+                        aria-hidden="true"
                         fill="white"
                         className="apple-icloud-logo dark"
                         viewBox="0 0 82 31"

@@ -41,24 +41,25 @@ export default function AdminLogin() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50">
-            <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
-                <div>
-                    <h2 className="mt-6 text-center text-3xl font-bold text-gray-900">
-                        Admin Login
-                    </h2>
+        <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a] p-4">
+            <div className="max-w-md w-full">
+                {/* Logo/Header */}
+                <div className="text-center mb-8">
+                    <h1 className="text-2xl font-semibold text-white mb-2">iCloud Panel</h1>
+                    <p className="text-sm text-gray-400">Admin Authentication</p>
                 </div>
 
-                <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-                    {error && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-                            {error}
-                        </div>
-                    )}
+                {/* Login Card */}
+                <div className="bg-[#1C1C1E] border border-[#2C2C2E] rounded p-6">
+                    <form className="space-y-4" onSubmit={handleLogin}>
+                        {error && (
+                            <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded text-sm font-medium">
+                                {error}
+                            </div>
+                        )}
 
-                    <div className="space-y-4">
                         <div>
-                            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+                            <label htmlFor="username" className="block text-xs font-medium text-gray-400 mb-2">
                                 Username
                             </label>
                             <input
@@ -68,13 +69,13 @@ export default function AdminLogin() {
                                 required
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
-                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Enter username"
+                                className="w-full px-3 py-2.5 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-[#f0b100] focus:ring-1 focus:ring-[#f0b100]"
+                                placeholder="Enter your username"
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                            <label htmlFor="password" className="block text-xs font-medium text-gray-400 mb-2">
                                 Password
                             </label>
                             <input
@@ -84,22 +85,27 @@ export default function AdminLogin() {
                                 required
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Enter password"
+                                className="w-full px-3 py-2.5 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-[#f0b100] focus:ring-1 focus:ring-[#f0b100]"
+                                placeholder="Enter your password"
                             />
                         </div>
-                    </div>
 
-                    <div>
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                            className="w-full py-2.5 bg-[#f0b100] hover:bg-[#d99a00] text-black font-semibold rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-6"
                         >
-                            {loading ? 'Logging in...' : 'Login'}
+                            {loading ? 'Signing in...' : 'Sign In'}
                         </button>
-                    </div>
-                </form>
+                    </form>
+                </div>
+
+                {/* Footer */}
+                <div className="text-center mt-6">
+                    <p className="text-xs text-gray-500">
+                        Protected by enterprise security
+                    </p>
+                </div>
             </div>
         </div>
     );
