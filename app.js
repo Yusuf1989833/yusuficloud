@@ -1,3 +1,4 @@
+import './src/lib/env.js';
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cache from "./src/lib/cache.js";
@@ -25,10 +26,15 @@ io.use(async (socket, next) => {
             if (verification.valid) {
                 socket.isAdmin = true;
                 socket.adminUsername = verification.username;
+            } else {
+                console.log(`Socket auth failed for ${socket.id}: ${verification.error || 'invalid token'}`);
             }
+        } else {
+            console.log(`Socket connected without token: ${socket.id}`);
         }
         next();
     } catch (error) {
+        console.error('Socket auth error:', error.message);
         next(new Error("Authentication error"));
     }
 });

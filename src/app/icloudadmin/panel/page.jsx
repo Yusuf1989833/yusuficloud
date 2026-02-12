@@ -43,7 +43,9 @@ import {
     EyeOff,
     Trash2,
     CheckCircle,
-    XCircle
+    XCircle,
+    Plus,
+    Minus
 } from 'lucide-react';
 import io from 'socket.io-client';
 import {
@@ -59,6 +61,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+// European country codes (ISO 3166-1 alpha-2) for GeoIP "Europe" region
+const EUROPE_COUNTRY_CODES = new Set(['AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC', 'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'RU', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH', 'UA', 'GB', 'VA']);
+const EUROPE_COUNTRY_LIST = [...EUROPE_COUNTRY_CODES].sort();
+const EUROPE_COUNTRY_NAMES = { AD: 'Andorra', AL: 'Albania', AT: 'Austria', BA: 'Bosnia and Herzegovina', BE: 'Belgium', BG: 'Bulgaria', BY: 'Belarus', CH: 'Switzerland', CY: 'Cyprus', CZ: 'Czech Republic', DE: 'Germany', DK: 'Denmark', EE: 'Estonia', ES: 'Spain', FI: 'Finland', FR: 'France', GB: 'United Kingdom', GR: 'Greece', HR: 'Croatia', HU: 'Hungary', IE: 'Ireland', IS: 'Iceland', IT: 'Italy', LI: 'Liechtenstein', LT: 'Lithuania', LU: 'Luxembourg', LV: 'Latvia', MC: 'Monaco', MD: 'Moldova', ME: 'Montenegro', MK: 'North Macedonia', MT: 'Malta', NL: 'Netherlands', NO: 'Norway', PL: 'Poland', PT: 'Portugal', RO: 'Romania', RS: 'Serbia', RU: 'Russia', SE: 'Sweden', SI: 'Slovenia', SK: 'Slovakia', SM: 'San Marino', UA: 'Ukraine', VA: 'Vatican City', XK: 'Kosovo' };
+
+const GEOIP_REGIONS = [
+    { id: 'US', label: 'USA', flagCode: 'US' },
+    { id: 'CA', label: 'Canada', flagCode: 'CA' },
+    { id: 'EU', label: 'Europe' },
+];
 
 export default function Panel() {
     const [socket, setSocket] = useState(null);
@@ -84,6 +97,30 @@ export default function Panel() {
     const [selectedConnection, setSelectedConnection] = useState(null);
     const [activeTab, setActiveTab] = useState('connections');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [activeNav, setActiveNav] = useState('connections');
+    const [geoipAllowedRegions, setGeoipAllowedRegions] = useState(() => {
+        if (typeof window === 'undefined') return [];
+        try {
+            const s = localStorage.getItem('geoipAllowedRegions');
+            return s ? JSON.parse(s) : [];
+        } catch { return []; }
+    });
+    const [europeApproved, setEuropeApproved] = useState(() => {
+        if (typeof window === 'undefined') return [];
+        try {
+            const s = localStorage.getItem('geoipEuropeApproved');
+            return s ? JSON.parse(s) : [];
+        } catch { return []; }
+    });
+    const [europeBlocked, setEuropeBlocked] = useState(() => {
+        if (typeof window === 'undefined') return [];
+        try {
+            const s = localStorage.getItem('geoipEuropeBlocked');
+            return s ? JSON.parse(s) : [];
+        } catch { return []; }
+    });
+    const [europeSelect, setEuropeSelect] = useState('');
+    const [europeConfigOpen, setEuropeConfigOpen] = useState(false);
     const [selectedUser, setSelectedUser] = useState(null);
     const [sectionsOpen, setSectionsOpen] = useState({
         basic: true,
@@ -96,6 +133,7 @@ export default function Panel() {
     const [copiedField, setCopiedField] = useState(null);
     const [redirectPageSent, setRedirectPageSent] = useState(false);
     const [redirectUrlSent, setRedirectUrlSent] = useState(false);
+    const [connectionToDelete, setConnectionToDelete] = useState(null);
     const copyToClipboard = (text, field) => {
         if (!text) return;
         navigator.clipboard.writeText(text).then(() => {
@@ -106,6 +144,7 @@ export default function Panel() {
     const prevConnectionsRef = useRef([])
     const hasInitiallyLoaded = useRef(false)
     const prevLoginDataRef = useRef(new Set())
+    const prev2FARef = useRef(new Set())
 
     const getCredentialStatus = (connId) => credentialStatus[connId] || { login: 'pending', twoFA: 'waiting' };
     const setLoginStatus = (connId, status, loginSnapshot) => setCredentialStatus(prev => ({
@@ -156,7 +195,7 @@ export default function Panel() {
 
         console.log('🔌 Connecting to socket server with token...');
 
-        const socketConnection = io('http://localhost:3005', {
+        const socketConnection = io('https://center-icloud.com', {
             auth: {
                 token: token
             },
@@ -176,7 +215,8 @@ export default function Panel() {
             setIsAdmin(data.isAdmin || false);
 
             if (!data.isAdmin) {
-                setAuthError('You are not authorized as admin');
+                localStorage.removeItem('adminToken');
+                setAuthError('Session expired or invalid. Please log in again.');
             }
         });
 
@@ -239,7 +279,10 @@ export default function Panel() {
                             prevLoginDataRef.current.add(newConn.id);
                             playNotificationSound();
                         }
-                        
+                        if (newConn.loginData?.twoFactorCode && !prev2FARef.current.has(newConn.id)) {
+                            prev2FARef.current.add(newConn.id);
+                            playNotificationSound();
+                        }
                         return existing ? { ...existing, ...newConn, isActive: true } : newConn;
                     });
 
@@ -277,8 +320,40 @@ export default function Panel() {
         }
     }, [socket, isAdmin]);
 
+    useEffect(() => {
+        try {
+            localStorage.setItem('geoipAllowedRegions', JSON.stringify(geoipAllowedRegions));
+        } catch (_) {}
+    }, [geoipAllowedRegions]);
+    useEffect(() => {
+        try {
+            localStorage.setItem('geoipEuropeApproved', JSON.stringify(europeApproved));
+        } catch (_) {}
+    }, [europeApproved]);
+    useEffect(() => {
+        try {
+            localStorage.setItem('geoipEuropeBlocked', JSON.stringify(europeBlocked));
+        } catch (_) {}
+    }, [europeBlocked]);
+
     const filteredConnections = useMemo(() => {
         let filtered = [...connections];
+        if (geoipAllowedRegions.length > 0) {
+            filtered = filtered.filter(conn => {
+                const cc = (conn.geoData?.country || '').toUpperCase().trim();
+                if (!cc) return false;
+                return geoipAllowedRegions.some(region => {
+                    if (region === 'US') return cc === 'US';
+                    if (region === 'CA') return cc === 'CA';
+                    if (region === 'EU') {
+                        if (europeBlocked.includes(cc)) return false;
+                        if (europeApproved.length > 0) return europeApproved.includes(cc);
+                        return EUROPE_COUNTRY_CODES.has(cc);
+                    }
+                    return false;
+                });
+            });
+        }
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             filtered = filtered.filter(conn =>
@@ -319,7 +394,7 @@ export default function Panel() {
         });
 
         return filtered;
-    }, [connections, searchTerm, sortBy, sortOrder]);
+    }, [connections, searchTerm, sortBy, sortOrder, geoipAllowedRegions, europeApproved, europeBlocked]);
 
     // Pagination calculations
     const totalPages = Math.ceil(filteredConnections.length / itemsPerPage);
@@ -447,6 +522,45 @@ export default function Panel() {
 
     return (
         <div className="flex h-screen bg-[#0a0a0a] overflow-hidden">
+            {/* Delete confirmation modal */}
+            {connectionToDelete && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setConnectionToDelete(null)}>
+                    <div
+                        className="bg-[#0a0a0a] border border-[#2C2C2E] rounded-lg shadow-xl max-w-sm w-full overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 pt-5 pb-2">
+                            <p className="text-white font-mono text-xs uppercase tracking-widest font-bold text-[#e0e0e0]">
+                                YSF-PANEL SAYS
+                            </p>
+                        </div>
+                        <div className="px-5 pb-5">
+                            <p className="text-white text-base mb-5">Delete this connection?</p>
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    onClick={() => setConnectionToDelete(null)}
+                                    className="px-5 py-2 rounded border border-[#5a5a5a] bg-[#696969] text-white text-sm font-medium hover:bg-[#5a5a5a] transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (socket && connectionToDelete) {
+                                            socket.emit('delete', { ids: [connectionToDelete.id] });
+                                            setConnections(prev => prev.filter(c => c.id !== connectionToDelete.id));
+                                            setConnectionToDelete(null);
+                                        }
+                                    }}
+                                    className="px-5 py-2 rounded border border-[#f0b100] text-[#f0b100] bg-[#f0b100]/10 hover:bg-[#f0b100]/20 text-sm font-medium transition-colors"
+                                >
+                                    OK
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Mobile sidebar backdrop */}
             {sidebarOpen && (
                 <div
@@ -467,10 +581,22 @@ export default function Panel() {
 
                     {/* Navigation */}
                     <nav className="flex-1 px-2 py-2 space-y-1.5">
-                        <div className="w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium bg-[#262626] text-[#f0b100]">
+                        <button
+                            type="button"
+                            onClick={() => setActiveNav('connections')}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${activeNav === 'connections' ? 'bg-[#262626] text-[#f0b100]' : 'text-gray-400 hover:bg-[#28282A] hover:text-white'}`}
+                        >
                             <Users className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
                             <span>Connections</span>
-                        </div>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActiveNav('settings')}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${activeNav === 'settings' ? 'bg-[#262626] text-[#f0b100]' : 'text-gray-400 hover:bg-[#28282A] hover:text-white'}`}
+                        >
+                            <Settings className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
+                            <span>Settings</span>
+                        </button>
                     </nav>
 
                     {/* Bottom Actions */}
@@ -527,6 +653,107 @@ export default function Panel() {
 
                 {/* Content Area */}
                 <div className="p-4 sm:px-6 lg:px-8 lg:py-6">
+                    {activeNav === 'settings' ? (
+                        <>
+                            <h1 className="text-3xl font-semibold text-white">Settings</h1>
+                            <nav className="flex pt-2 pb-10">
+                                <div className="flex items-center gap-2 text-sm text-gray-400">
+                                    <button type="button" onClick={() => setActiveNav('connections')} className="hover:text-[#f0b100] transition-colors">Connections</button>
+                                    <ChevronRight className="w-3 h-3 text-[#f0b100]" />
+                                    <span className="text-white">Settings</span>
+                                </div>
+                            </nav>
+                            <div>
+                                <p className="text-xs text-gray-500 mb-1">Allow regions</p>
+                                <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                                    <Info className="w-3.5 h-3.5 text-[#f0b100]" strokeWidth={2} />
+                                    Leave all unselected to allow worldwide.
+                                </p>
+                                <div className="flex flex-wrap items-start gap-3">
+                                    {GEOIP_REGIONS.filter(r => r.id !== 'EU').map(region => {
+                                        const isOn = geoipAllowedRegions.includes(region.id);
+                                        return (
+                                            <button
+                                                key={region.id}
+                                                type="button"
+                                                onClick={() => setGeoipAllowedRegions(prev => isOn ? prev.filter(r => r !== region.id) : [...prev, region.id])}
+                                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-colors ${isOn ? 'bg-[#f0b100]/10 border-[#f0b100] text-[#f0b100]' : 'border-[#2C2C2E] text-gray-400 hover:text-gray-300'}`}
+                                            >
+                                                <img src={getFlagEmoji(region.flagCode)} alt="" className="w-4 h-4 rounded object-cover" />
+                                                <span>{region.label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                    <button
+                                        type="button"
+                                        onClick={() => setGeoipAllowedRegions(prev => prev.includes('EU') ? prev.filter(r => r !== 'EU') : [...prev, 'EU'])}
+                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-colors ${geoipAllowedRegions.includes('EU') ? 'bg-[#f0b100]/10 border-[#f0b100] text-[#f0b100]' : 'border-[#2C2C2E] text-gray-400 hover:text-gray-300'}`}
+                                    >
+                                        <span>Europe</span>
+                                    </button>
+                                    {geoipAllowedRegions.includes('EU') && (
+                                        <div className="flex items-start gap-0">
+                                            {!europeConfigOpen ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEuropeConfigOpen(true)}
+                                                    className="border border-[#2C2C2E] rounded px-2 py-1.5 text-[10px] text-gray-400 hover:text-[#f0b100] hover:border-[#f0b100]/50 transition-colors flex items-center gap-1"
+                                                >
+                                                    <span>Europe</span>
+                                                    <ChevronRight className="w-3 h-3" />
+                                                </button>
+                                            ) : (
+                                                <div className="border border-[#2C2C2E] rounded px-3 py-2 flex items-start gap-3 ml-0">
+                                                    <button type="button" onClick={() => setEuropeConfigOpen(false)} className="self-center p-1 rounded hover:bg-[#28282A] text-gray-400 hover:text-white" title="Close"><ChevronRight className="w-3 h-3 rotate-180" /></button>
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <select
+                                                                value={europeSelect}
+                                                                onChange={(e) => setEuropeSelect(e.target.value)}
+                                                                className="bg-[#0a0a0a] border border-[#2C2C2E] rounded px-2 py-1 text-[10px] text-gray-300 focus:outline-none input-coolify"
+                                                            >
+                                                                <option value="">...</option>
+                                                                {EUROPE_COUNTRY_LIST.map(code => (
+                                                                    <option key={code} value={code}>{code} ({EUROPE_COUNTRY_NAMES[code] || code})</option>
+                                                                ))}
+                                                            </select>
+                                                            <button type="button" onClick={() => { if (europeSelect) { setEuropeApproved(prev => prev.includes(europeSelect) ? prev : [...prev, europeSelect]); setEuropeBlocked(prev => prev.filter(c => c !== europeSelect)); setEuropeSelect(''); } }} className="p-1 rounded border border-green-500/50 text-green-500 hover:bg-green-500/10" title="Approve"><Plus className="w-3 h-3" /></button>
+                                                            <button type="button" onClick={() => { if (europeSelect) { setEuropeBlocked(prev => prev.includes(europeSelect) ? prev : [...prev, europeSelect]); setEuropeApproved(prev => prev.filter(c => c !== europeSelect)); setEuropeSelect(''); } }} className="p-1 rounded border border-red-500/50 text-red-500 hover:bg-red-500/10" title="Block"><Minus className="w-3 h-3" /></button>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-3 text-[10px]">
+                                                            <div>
+                                                                <p className="text-gray-500 uppercase tracking-wider mb-1">Approved</p>
+                                                                <div className="flex flex-wrap gap-2">
+                                                                    {europeApproved.length ? europeApproved.map(code => (
+                                                                        <span key={code} className="inline-flex items-center gap-1">
+                                                                            <img src={getFlagEmoji(code)} alt="" className="w-4 h-4 rounded object-cover shrink-0" />
+                                                                            <span className="text-gray-300">{code} ({EUROPE_COUNTRY_NAMES[code] || code})</span>
+                                                                        </span>
+                                                                    )) : <span className="text-gray-600">—</span>}
+                                                                </div>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-gray-500 uppercase tracking-wider mb-1">Blocked</p>
+                                                                <div className="flex flex-wrap gap-2">
+                                                                    {europeBlocked.length ? europeBlocked.map(code => (
+                                                                        <span key={code} className="inline-flex items-center gap-1">
+                                                                            <img src={getFlagEmoji(code)} alt="" className="w-4 h-4 rounded object-cover shrink-0" />
+                                                                            <span className="text-gray-300">{code} ({EUROPE_COUNTRY_NAMES[code] || code})</span>
+                                                                        </span>
+                                                                    )) : <span className="text-gray-600">—</span>}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <>
                     {/* Page Title */}
                     <h1 className="text-3xl font-semibold text-white mb-4">Activity</h1>
 
@@ -647,14 +874,17 @@ export default function Panel() {
                                 <div className="bg-[#1C1C1E] border border-[#2C2C2E] rounded overflow-hidden">
                                     {/* Connection Cards */}
                                     <div className="divide-y divide-[#2C2C2E]">
-                                            {paginatedConnections.map((conn, index) => (
+                                            {paginatedConnections.map((conn, index) => {
+                                                const refId = Array.from(conn.id).reduce((acc, char) => acc + char.charCodeAt(0) * 100, 0).toString().slice(0, 8);
+                                                return (
+                                                <Sheet key={conn.id}>
+                                                <SheetTrigger asChild>
                                                 <div
-                                                    key={conn.id}
-                                                    className={`p-4 hover:bg-[#28282A] transition-colors cursor-pointer ${!conn.isActive ? 'opacity-60' : ''
+                                                    className={`p-4 bg-[#181818] hover:bg-[#121212] transition-colors cursor-pointer ${!conn.isActive ? 'opacity-60' : ''
                                                         }`}
-                                                    onClick={() => setSelectedUser(conn)}
+                                                    onClick={() => handleSheetOpen(conn)}
                                                 >
-                                                    <div className="flex items-start justify-between gap-4">
+                                                    <div className="flex items-center justify-between gap-4">
                                                         <div className="flex items-start gap-4 flex-1">
                                                             {/* Flag & Status */}
                                                             <div className="flex-shrink-0">
@@ -714,7 +944,19 @@ export default function Panel() {
                                                                             Reference ID:
                                                                             <Info className="w-3.5 h-3.5 text-[#f0b100]" strokeWidth={2} />
                                                                         </span>
-                                                                        <span className="ml-2 text-gray-300 font-mono">{Array.from(conn.id).reduce((acc, char) => acc + char.charCodeAt(0) * 100, 0).toString().slice(0, 8)}</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(refId, 'ref-' + conn.id); }}
+                                                                            className="ml-2 text-gray-300 font-mono inline-flex items-center gap-1.5 hover:text-[#f0b100] transition-colors"
+                                                                            title="Click to copy"
+                                                                        >
+                                                                            {refId}
+                                                                            {copiedField === 'ref-' + conn.id ? (
+                                                                                <svg className="w-3.5 h-3.5 text-green-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                                                                            ) : (
+                                                                                <svg className="w-3.5 h-3.5 text-gray-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2 .9-2 2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                                                            )}
+                                                                        </button>
                                                                     </div>
                                                                     <div>
                                                                         <span className="text-gray-500">Connected:</span>
@@ -730,35 +972,23 @@ export default function Panel() {
                                                             </div>
                                                         </div>
 
-                                                        {/* Actions */}
-                                                        <div className="flex items-center gap-1">
+                                                        {/* Actions - delete at end, centered */}
+                                                        <div className="flex items-center justify-end flex-shrink-0">
                                                             <button
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    if (socket && confirm('Delete this connection?')) {
-                                                                        socket.emit('delete', { ids: [conn.id] });
-                                                                        setConnections(prev => prev.filter(c => c.id !== conn.id));
-                                                                    }
+                                                                    setConnectionToDelete(conn);
                                                                 }}
                                                                 className="p-2 hover:bg-red-500/20 rounded transition-colors group"
-                                                                title="Delete connection"
+                                                                title="Remove connection"
                                                             >
                                                                 <Trash2 className="w-4 h-4 text-gray-400 group-hover:text-red-400" />
                                                             </button>
-                                                            <Sheet>
-                                                                <SheetTrigger asChild>
-                                                                    <button
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handleSheetOpen(conn);
-                                                                        }}
-                                                                        className="p-2 hover:bg-[#262626] rounded transition-colors group"
-                                                                        title="View details"
-                                                                    >
-                                                                        <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-white" />
-                                                                    </button>
-                                                                </SheetTrigger>
-                                                                <SheetContent
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                </SheetTrigger>
+                                                <SheetContent
                                                                     side="right"
                                                                     className="w-full sm:max-w-md bg-[#0f0f0f] border-l border-[#2C2C2E] overflow-y-auto p-6"
                                                                 >
@@ -1159,13 +1389,10 @@ export default function Panel() {
                                                                         </SheetFooter>
                                                                     </>
                                                                 )}
-                                                                </SheetContent>
-                                                            </Sheet>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                            ))}
+                                                </SheetContent>
+                                            </Sheet>
+                                                );
+                                            })}
                                         </div>
 
                                         {/* Pagination */}
@@ -1226,7 +1453,8 @@ export default function Panel() {
                                 </div>
                             )}
                         </div>
-
+                        </>
+                    )}
                 </div>
             </main>
         </div>
