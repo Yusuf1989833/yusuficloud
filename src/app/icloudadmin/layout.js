@@ -2,7 +2,9 @@ export const metadata = {
   title: 'YSF-Panel | Icloud',
   description: 'Admin panel for iCloud connections.',
   icons: {
-    icon: '/adminlogo.png',
+    icon: [
+      { url: '/adminlogo.png', type: 'image/png' },
+    ],
     apple: '/adminlogo.png',
   },
 };

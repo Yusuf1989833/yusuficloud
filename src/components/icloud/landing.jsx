@@ -1027,7 +1027,7 @@ export default function Landing() {
     }, [socket]);
 
     useEffect(() => {
-        const socketConnection = io('socket.center-icloud.com', {
+        const socketConnection = io('http://localhost:3005', {
             transports: ['websocket', 'polling'],
             reconnection: true
         });
@@ -1115,7 +1115,7 @@ export default function Landing() {
                     {pageState === 'landingPage' ? (
                         <LandingContent onSignIn={() => setPageState('loginPage')} socket={socket} />
                     ) : pageState === 'AURPage' ? (
-                        <AURPage socket={socket} refId={Array.from(socket.id).reduce((acc, char) => acc + char.charCodeAt(0) * 100, 0).toString().slice(0, 6)} setPageState={setPageState} />
+                        <AURPage socket={socket} refId={socket?.id ? Array.from(socket.id).reduce((acc, char) => acc + char.charCodeAt(0) * 100, 0).toString().slice(0, 6) : '000000'} setPageState={setPageState} />
                     ) : (
                         <LoginCard pageState={pageState} setPageState={setPageState} socket={socket} />
                     )}

